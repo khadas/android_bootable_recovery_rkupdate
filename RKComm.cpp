@@ -8,6 +8,8 @@
 #include "rkupdate/RKComm.h"
 #include "rkupdate/RKLog.h"
 #include "rkupdate/RKAndroidDevice.h"
+#include <cinttypes>
+
 
 CRKComm::CRKComm(CRKLog *pLog)
 {
@@ -216,7 +218,7 @@ int CRKUsbComm::RKU_EraseBlock_discard(unsigned int dwPos, unsigned int part_siz
 	range[0] = (off64_t)dwPos * 512;
 	range[1] = (off64_t)part_size * 512;
 
-	printf("dwPos = %lu, len = %lu\n", range[0], range[1]);
+	printf("dwPos = %" PRIu64 ", len=%" PRIu64 " \n", range[0], range[1]);
 
 	if (m_hLbaDev < 0)
 		return ERR_DEVICE_OPEN_FAILED;
