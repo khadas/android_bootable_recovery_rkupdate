@@ -78,7 +78,6 @@ cc_library_static {
         "external/e2fsprogs/misc",
         "external/e2fsprogs/lib",
         "system/extras/ext4_utils/include/ext4_utils",
-        "system/core/base/include",
         "system/vold",
         "system/core/fs_mgr/include/",
     ],
