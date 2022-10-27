@@ -3790,9 +3790,17 @@ void create_gpt_buffer(u8 *gpt, PARAM_ITEM_VECTOR &vecParts, CONFIG_ITEM_VECTOR 
 	gpt_header *gptHead = (gpt_header *)(gpt + SECTOR_SIZE);
 	gpt_entry *gptEntry = (gpt_entry *)(gpt + 2 * SECTOR_SIZE);
 	u32 i,j;
-	int pos;
+	int pos,backup_gpt_secs;
 	tstring strPartName;
 	string::size_type iPos;
+	if (diskSectors>=0x800000)
+	{
+		backup_gpt_secs = 64;
+	}
+	else{
+		backup_gpt_secs = 33;
+	}
+	printf("create_gpt_buffer backup_gpt_secs=%d\n", backup_gpt_secs);
 	/*1.protective mbr*/
 	memset(gpt, 0, SECTOR_SIZE);
 	mbr->signature = MSDOS_MBR_SIGNATURE;
@@ -3830,7 +3838,7 @@ void create_gpt_buffer(u8 *gpt, PARAM_ITEM_VECTOR &vecParts, CONFIG_ITEM_VECTOR 
 			if (strPartName.find(_T("bootable")) != tstring::npos)
 				gptEntry->attributes.raw = PART_PROPERTY_BOOTABLE;
 			if (strPartName.find(_T("grow")) != tstring::npos)
-				gptEntry->ending_lba = cpu_to_le64(diskSectors - 34);
+				gptEntry->ending_lba = cpu_to_le64(diskSectors - backup_gpt_secs -1);
 			strPartName = strPartName.substr(0,iPos);
 			vecParts[i].szItemName[strPartName.size()] = 0;
 		}
