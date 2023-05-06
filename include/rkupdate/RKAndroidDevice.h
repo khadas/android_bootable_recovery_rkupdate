@@ -119,6 +119,8 @@ const BYTE Wipe_All[]={0x72,0x65,0x63,0x6F,0x76,0x65,
 #define LBA_TRANSFER_SIZE		16*1024
 #define LBA_LOOP_SIZE	1024*1024
 
+#define RK_PAGE_SIZE 2048
+
 #define MAX_PACKAGE_FILES			16
 #define RKIMAGE_TAG				0x46414B52
 #define PARTNAME_BOOTLOADER		"bootloader"
@@ -263,7 +265,7 @@ private:
 	bool GetParameterPartSize(STRUCT_RKIMAGE_ITEM &paramItem);
 	bool ParsePartitionInfo(string &strPartInfo,string &strName,UINT &uiOffset,UINT &uiLen);
 	bool MakeParamFileBuffer(STRUCT_RKIMAGE_ITEM &entry);
-	bool CheckParamPartSize(STRUCT_RKIMAGE_HDR &rkImageHead,int iParamPos);
+	bool CheckParamPartSize(u_int8* pItemBuffer,int iParamPos,int iItemCount);
 	bool write_partition_upgrade_flag(DWORD dwOffset,BYTE *pMd5,UINT uiFlag);
 	bool read_partition_upgrade_flag(DWORD dwOffset,BYTE *pMd5,UINT *uiFlag);
 	bool RKA_SparseFile_Download(STRUCT_RKIMAGE_ITEM &entry,long long &currentByte,long long totalByte);

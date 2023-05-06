@@ -1051,7 +1051,10 @@ int CRKAndroidDevice::DownloadImage()
 	bool  bRet;
 	dwFwOffset = m_pImage->FWOffset;
 	STRUCT_RKIMAGE_HDR rkImageHead;
-	int iHeadSize;
+	STRUCT_RKIMAGE_ITEM *pDownloadItem;
+	u_int8 headerData[64*1024];
+	u_int8* pHeaderData=headerData;
+	int iHeadSize,iHeadMetaSize;
 	iHeadSize = sizeof(STRUCT_RKIMAGE_HDR);
 	char szPrompt[100];
 	if (m_pProcessCallback)
@@ -1065,6 +1068,28 @@ int CRKAndroidDevice::DownloadImage()
 		}
 		return -1;
 	}
+
+	if ((rkImageHead.manufacturer[56]==0x55)&&(rkImageHead.manufacturer[57]==0x66))
+	{
+		u_int16 *pItemRemain;
+		pItemRemain = (u_int16 *)(&rkImageHead.manufacturer[58]);
+		rkImageHead.item_count += *pItemRemain;
+	}
+	iHeadMetaSize = iHeadSize = sizeof(STRUCT_RKIMAGE_HDR)-sizeof(STRUCT_RKIMAGE_ITEM)*MAX_PACKAGE_FILES;
+	iHeadSize += rkImageHead.item_count*sizeof(STRUCT_RKIMAGE_ITEM);
+	iHeadSize = CALC_UNIT(iHeadSize, RK_PAGE_SIZE)*RK_PAGE_SIZE;
+
+	bRet = m_pImage->GetData(dwFwOffset,iHeadSize,(u_int8*)pHeaderData);
+	if ( !bRet )
+	{
+		if (m_pLog)
+		{
+			m_pLog->Record("ERROR:DownloadImage-->GetData for header failed");
+		}
+		return -1;
+	}
+
+	printf("DownloadImage rkImageHead.item_count=%d \n", rkImageHead.item_count);
 	if ( rkImageHead.item_count<=0 )
 	{
 		if (m_pLog)
@@ -1073,6 +1098,7 @@ int CRKAndroidDevice::DownloadImage()
 		}
 		return -2;
 	}
+
 
 	m_dwBackupOffset = 0xFFFFFFFF;
 	int i;
@@ -1083,48 +1109,49 @@ int CRKAndroidDevice::DownloadImage()
 	UINT uiSparseFlag = 0;
 	for ( i=0;i<rkImageHead.item_count;i++ )
 	{
-		if ( rkImageHead.item[i].flash_offset!=0xFFFFFFFF )
+		pDownloadItem = (STRUCT_RKIMAGE_ITEM *)(pHeaderData+iHeadMetaSize+i*sizeof(STRUCT_RKIMAGE_ITEM));
+		if ( pDownloadItem->flash_offset!=0xFFFFFFFF )
 		{
-			if ( strcmp(rkImageHead.item[i].name,PARTNAME_PARAMETER)==0)
+			if ( strcmp(pDownloadItem->name,PARTNAME_PARAMETER)==0)
 			{
 				bFound = true;
 				iParamPos = i;
 			}
 			else
 			{
-				if (strcmp(rkImageHead.item[i].name,PARTNAME_SYSTEM)==0)
+				if (strcmp(pDownloadItem->name,PARTNAME_SYSTEM)==0)
 				{
 					bFoundSystem = true;
 				}
-				if (strcmp(rkImageHead.item[i].name,PARTNAME_USERDATA)==0)
+				if (strcmp(pDownloadItem->name,PARTNAME_USERDATA)==0)
 				{
 					bFoundUserData = true;
 				}
-				if (strcmp(rkImageHead.item[i].name,PARTNAME_BACKUP)==0)
+				if (strcmp(pDownloadItem->name,PARTNAME_BACKUP)==0)
 				{
-					m_dwBackupOffset = rkImageHead.item[i].flash_offset;
+					m_dwBackupOffset = pDownloadItem->flash_offset;
 				}
-				if (rkImageHead.item[i].file[55]=='H')
+				if (pDownloadItem->file[55]=='H')
 				{
-					ulItemSize = *((DWORD *)(&rkImageHead.item[i].file[56]));
+					ulItemSize = *((DWORD *)(&pDownloadItem->file[56]));
 					ulItemSize <<= 32;
-					ulItemSize += rkImageHead.item[i].size;
+					ulItemSize += pDownloadItem->size;
 				}
-				if (IsSparseImage(rkImageHead.item[i]))
+				if (IsSparseImage(*pDownloadItem))
 				{
 					uiSparseFlag += (1<<i);
-					ulItemSize = GetSparseImageSize(rkImageHead.item[i]);
+					ulItemSize = GetSparseImageSize(*pDownloadItem);
 					if (ulItemSize==(long long)-1)
 					{
 						if (m_pLog)
 						{
-							m_pLog->Record(_T("ERROR:DownloadImage-->get sparse size failed,file=%s"),rkImageHead.item[i].name);
+							m_pLog->Record(_T("ERROR:DownloadImage-->get sparse size failed,file=%s"),pDownloadItem->name);
 						}
 						return -14;
 					}
 				}
 				else
-					ulItemSize = rkImageHead.item[i].size;
+					ulItemSize = pDownloadItem->size;
 				uiTotalSize += ulItemSize;
 			}
 
@@ -1140,7 +1167,8 @@ int CRKAndroidDevice::DownloadImage()
 		return -3;
 	}
 
-	if (!MakeParamFileBuffer(rkImageHead.item[iParamPos]))
+	pDownloadItem = (STRUCT_RKIMAGE_ITEM *)(pHeaderData+iHeadMetaSize+iParamPos*sizeof(STRUCT_RKIMAGE_ITEM));
+	if (!MakeParamFileBuffer(*pDownloadItem))
 	{
 		if (m_pLog)
 		{
@@ -1149,11 +1177,11 @@ int CRKAndroidDevice::DownloadImage()
 		return -12;
 	}
 
-	GptFlag = GetParameterGptFlag(rkImageHead.item[iParamPos]);
+	GptFlag = GetParameterGptFlag(*pDownloadItem);
 	bGptFlag = GptFlag;
 	if (!GptFlag)
 	{
-		if (!CheckParamPartSize(rkImageHead,iParamPos))
+		if (!CheckParamPartSize(pHeaderData+iHeadMetaSize,iParamPos,rkImageHead.item_count))
 		{
 			if (m_pLog)
 			{
@@ -1173,9 +1201,10 @@ int CRKAndroidDevice::DownloadImage()
 	long long uiCurrentByte=0;
 	for ( i=0;i<rkImageHead.item_count;i++ )
 	{
+		pDownloadItem = (STRUCT_RKIMAGE_ITEM *)(pHeaderData+iHeadMetaSize+i*sizeof(STRUCT_RKIMAGE_ITEM));
 		if (m_pProcessCallback)
 			m_pProcessCallback((double)uiCurrentByte/(double)uiTotalSize,0);
-		if ( rkImageHead.item[i].flash_offset==0xFFFFFFFF )
+		if ( pDownloadItem->flash_offset==0xFFFFFFFF )
 		{
 			continue;
 		}
@@ -1183,12 +1212,12 @@ int CRKAndroidDevice::DownloadImage()
 		{
 			if (m_pCallback)
 			{
-				sprintf(szPrompt,"%s writing... \n",rkImageHead.item[i].name);
+				sprintf(szPrompt,"%s writing... \n",pDownloadItem->name);
 				m_pCallback(szPrompt);
 			}
 			if (GptFlag)
 			{
-				bRet = RKA_Gpt_Download(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+				bRet = RKA_Gpt_Download(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				if ( !bRet )
 				{
 					if (m_pLog)
@@ -1201,7 +1230,7 @@ int CRKAndroidDevice::DownloadImage()
 			}
 			else
 			{
-				bRet = RKA_Param_Download(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+				bRet = RKA_Param_Download(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				if ( !bRet )
 				{
 					if (m_pLog)
@@ -1220,35 +1249,35 @@ int CRKAndroidDevice::DownloadImage()
 		}
 		else
 		{
-			if (rkImageHead.item[i].file[55]=='H')
+			if (pDownloadItem->file[55]=='H')
 			{
-				ulItemSize = *((DWORD *)(&rkImageHead.item[i].file[56]));
+				ulItemSize = *((DWORD *)(&pDownloadItem->file[56]));
 				ulItemSize <<= 32;
-				ulItemSize += rkImageHead.item[i].size;
+				ulItemSize += pDownloadItem->size;
 			}
 			else
-				ulItemSize = rkImageHead.item[i].size;
+				ulItemSize = pDownloadItem->size;
 
 			if (ulItemSize>0)
 			{
 				if (m_pCallback)
 				{
-					sprintf(szPrompt,"%s writing... \n",rkImageHead.item[i].name);
+					sprintf(szPrompt,"%s writing... \n",pDownloadItem->name);
 					m_pCallback(szPrompt);
 				}
 				if (uiSparseFlag & (1<<i))
 				{
-					bRet = RKA_SparseFile_Download(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+					bRet = RKA_SparseFile_Download(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				}
 				else
-					bRet = RKA_File_Download(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+					bRet = RKA_File_Download(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				if ( !bRet )
 				{
 					if (m_pLog)
 					{
-						m_pLog->Record(_T("ERROR:DownloadImage-->RKA_File_Download failed(%s)"),rkImageHead.item[i].name);
+						m_pLog->Record(_T("ERROR:DownloadImage-->RKA_File_Download failed(%s)"),pDownloadItem->name);
 					}
-					m_pCallback("ERROR:DownloadImage-->RKA_File_Download failed(%s) \n",rkImageHead.item[i].name);
+					m_pCallback("ERROR:DownloadImage-->RKA_File_Download failed(%s) \n",pDownloadItem->name);
 					return -5;
 				}
 			}
@@ -1262,9 +1291,10 @@ int CRKAndroidDevice::DownloadImage()
 	uiCurrentByte = 0;
 	for ( i=0;i<rkImageHead.item_count;i++ )
 	{
+		pDownloadItem = (STRUCT_RKIMAGE_ITEM *)(pHeaderData+iHeadMetaSize+i*sizeof(STRUCT_RKIMAGE_ITEM));
 		if (m_pProcessCallback)
 			m_pProcessCallback((double)uiCurrentByte/(double)uiTotalSize,0);
-		if ( rkImageHead.item[i].flash_offset==0xFFFFFFFF )
+		if ( pDownloadItem->flash_offset==0xFFFFFFFF )
 		{
 			continue;
 		}
@@ -1272,12 +1302,12 @@ int CRKAndroidDevice::DownloadImage()
 		{
 			if (m_pCallback)
 			{
-				sprintf(szPrompt,"%s checking... \n",rkImageHead.item[i].name);
+				sprintf(szPrompt,"%s checking... \n",pDownloadItem->name);
 				m_pCallback(szPrompt);
 			}
 			if (GptFlag)
 			{
-				bRet = RKA_Gpt_Check(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+				bRet = RKA_Gpt_Check(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				if ( !bRet )
 				{
 					if (m_pLog)
@@ -1290,7 +1320,7 @@ int CRKAndroidDevice::DownloadImage()
 			}
 			else
 			{
-				bRet = RKA_Param_Check(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+				bRet = RKA_Param_Check(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				if ( !bRet )
 				{
 					if (m_pLog)
@@ -1304,34 +1334,34 @@ int CRKAndroidDevice::DownloadImage()
 		}
 		else
 		{
-			if (rkImageHead.item[i].file[55]=='H')
+			if (pDownloadItem->file[55]=='H')
 			{
-				ulItemSize = *((DWORD *)(&rkImageHead.item[i].file[56]));
+				ulItemSize = *((DWORD *)(&pDownloadItem->file[56]));
 				ulItemSize <<= 32;
-				ulItemSize += rkImageHead.item[i].size;
+				ulItemSize += pDownloadItem->size;
 			}
 			else
-				ulItemSize = rkImageHead.item[i].size;
+				ulItemSize = pDownloadItem->size;
 			if (ulItemSize>0)
 			{
 				if (m_pCallback)
 				{
-					sprintf(szPrompt,"%s checking... \n",rkImageHead.item[i].name);
+					sprintf(szPrompt,"%s checking... \n",pDownloadItem->name);
 					m_pCallback(szPrompt);
 				}
 				if (uiSparseFlag & (1<<i))
 				{
-					bRet = RKA_SparseFile_Check(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+					bRet = RKA_SparseFile_Check(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				}
 				else
-					bRet = RKA_File_Check(rkImageHead.item[i],uiCurrentByte,uiTotalSize);
+					bRet = RKA_File_Check(*pDownloadItem,uiCurrentByte,uiTotalSize);
 				if ( !bRet )
 				{
 					if (m_pLog)
 					{
-						m_pLog->Record(_T("ERROR:DownloadImage-->RKA_File_Check failed(%s)"),rkImageHead.item[i].name);
+						m_pLog->Record(_T("ERROR:DownloadImage-->RKA_File_Check failed(%s)"),pDownloadItem->name);
 					}
-					m_pCallback("ERROR:DownloadImage-->RKA_File_Check failed(%s) \n",rkImageHead.item[i].name);
+					m_pCallback("ERROR:DownloadImage-->RKA_File_Check failed(%s) \n",pDownloadItem->name);
 					return -7;
 				}
 			}
@@ -1388,6 +1418,7 @@ bool CRKAndroidDevice::read_partition_upgrade_flag(DWORD dwOffset,BYTE *pMd5,UIN
 
 int CRKAndroidDevice::UpgradePartition()
 {
+#if 0
 	long long dwFwOffset;
 	bool  bRet,bSameFw=false;
 	BYTE localMd5[32];
@@ -1625,6 +1656,9 @@ int CRKAndroidDevice::UpgradePartition()
 	if (m_pProcessCallback)
 		m_pProcessCallback(1,0);
 	return 0;
+#else
+	return 0;
+#endif
 }
 int CRKAndroidDevice::EraseIDB()
 {
@@ -2665,8 +2699,9 @@ bool CRKAndroidDevice::MakeParamFileBuffer(STRUCT_RKIMAGE_ITEM &entry)
 	delete []pBuffer;
 	return true;
 }
-bool CRKAndroidDevice::CheckParamPartSize(STRUCT_RKIMAGE_HDR &rkImageHead,int iParamPos)
+bool CRKAndroidDevice::CheckParamPartSize(u_int8* pItemBuffer,int iParamPos,int iItemCount)
 {
+#if 0
 //	UINT uiParamPartSize;
 //	int i;
 //	uiParamPartSize = 0xFFFFFFFF;
@@ -2690,6 +2725,33 @@ bool CRKAndroidDevice::CheckParamPartSize(STRUCT_RKIMAGE_HDR &rkImageHead,int iP
 	}
 
 	return true;
+#else
+	u_int32 uiParamPartSize;
+	STRUCT_RKIMAGE_ITEM *pItem;
+	int i;
+	uiParamPartSize = 0xFFFFFFFF;
+	for (i=0;i<iItemCount;i++)
+	{
+		pItem = (STRUCT_RKIMAGE_ITEM *)(pItemBuffer + i*sizeof(STRUCT_RKIMAGE_ITEM));
+		if (i!=iParamPos)
+		{
+			if (pItem->flash_offset<uiParamPartSize)
+			{
+				uiParamPartSize = pItem->flash_offset;
+			}
+		}
+	}
+	pItem = (STRUCT_RKIMAGE_ITEM *)(pItemBuffer + iParamPos*sizeof(STRUCT_RKIMAGE_ITEM));
+	if (!GetParameterPartSize(*pItem))
+		return false;
+	if (m_uiParamFileSize > pItem->part_size/8*512)
+	{
+		return false;
+	}
+
+	return true;
+
+#endif
 }
 bool CRKAndroidDevice::IsExistSector3Crc(PRKANDROID_IDB_SEC2 pSec)
 {

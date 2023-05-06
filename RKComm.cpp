@@ -101,14 +101,15 @@ CRKUsbComm::CRKUsbComm(CRKLog *pLog):CRKComm(pLog)
 		{
 			if (pLog){
 				pLog->Record(_T("ERROR:CRKUsbComm-->open %s failed,err=%d"),NAND_DRIVER_DEV_VENDOR,strerror(errno));
-				pLog->Record(_T("ERROR:CRKUsbComm-->try to read from %s."),NAND_DRIVER_DEV_VENDOR);
+				pLog->Record(_T("ERROR:CRKUsbComm-->try to read from %s."),EMMC_DRIVER_DEV_VENDOR);
             }
-		    m_hDev = open(NAND_DRIVER_DEV,O_RDWR,0);
-			if (pLog){
-				pLog->Record(_T("ERROR:CRKUsbComm-->open %s failed,err=%d"),NAND_DRIVER_DEV,strerror(errno));
+		    m_hDev = open(EMMC_DRIVER_DEV_VENDOR,O_RDWR,0);
+			if (m_hDev<0){
+				if (pLog)
+					pLog->Record(_T("ERROR:CRKUsbComm-->open %s failed,err=%d"),EMMC_DRIVER_DEV_VENDOR,strerror(errno));
             }else{
                 if (pLog)
-                    pLog->Record(_T("INFO:CRKUsbComm-->%s=%d"),NAND_DRIVER_DEV,m_hDev);
+                    pLog->Record(_T("INFO:CRKUsbComm-->%s=%d"),EMMC_DRIVER_DEV_VENDOR,m_hDev);
             }
 
 		}
@@ -244,16 +245,27 @@ int CRKUsbComm::RKU_ReadFlashID(BYTE* lpBuffer)
 int CRKUsbComm::RKU_ReadFlashInfo(BYTE* lpBuffer,UINT *puiRead)
 {
 	int ret;
-	if (m_hDev<0)
-		return ERR_DEVICE_OPEN_FAILED;
-	ret = ioctl(m_hDev,GET_FLASH_INFO_IO,lpBuffer);
-	if (ret)
-	{
-		if (m_log)
-			m_log->Record(_T("ERROR:RKU_ReadFlashInfo ioctl failed,err=%d"),errno);
-		return ERR_FAILED;
+	u32 page_buf[3];
+
+	if (m_hDev<0){
+		page_buf[0] = 0x00800000;
+		page_buf[1] = 0x00040400;
+		page_buf[2] = 0x00010028;
+		memcpy(lpBuffer, (unsigned char*)page_buf, 11);
+		*puiRead = 11;
+	}else{
+		ret = ioctl(m_hDev,GET_FLASH_INFO_IO,lpBuffer);
+		if (ret)
+		{
+			printf("RKU_ReadFlashInfo ioctl failed \n");
+			page_buf[0] = 0x00800000;
+			page_buf[1] = 0x00040400;
+			page_buf[2] = 0x00010028;
+			memcpy(lpBuffer, (unsigned char*)page_buf, 11);
+		}
+		*puiRead = 11;
 	}
-	*puiRead = 11;
+
 	return ERR_SUCCESS;
 }
 int CRKUsbComm::RKU_ReadLBA(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer,BYTE bySubCode)
@@ -303,11 +315,60 @@ int CRKUsbComm::RKU_ReadLBA(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer,BYTE bySubC
 	}
 	return ERR_SUCCESS;
 }
+
+int CRKUsbComm::RKU_ReadLBA_Direct(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer,BYTE bySubCode)
+{
+    long long ret;
+    long long dwPosBuf;
+	(void)bySubCode;
+	if (m_hLbaDev<0)
+	{
+		if (!m_bEmmc)
+		{
+			m_hLbaDev= open(NAND_DRIVER_DEV_LBA,O_RDWR|O_SYNC,0);
+			if (m_hLbaDev<0)
+			{
+				if (m_log)
+					m_log->Record(_T("ERROR:RKU_ReadLBA-->open %s failed,err=%d"),NAND_DRIVER_DEV_LBA,errno);
+				return ERR_DEVICE_OPEN_FAILED;
+			}
+			else
+			{
+				if (m_log)
+					m_log->Record(_T("INFO:RKU_ReadLBA-->open %s ok,handle=%d"),NAND_DRIVER_DEV_LBA,m_hLbaDev);
+			}
+		}
+		else
+			return ERR_DEVICE_OPEN_FAILED;
+	}
+
+    dwPosBuf = dwPos;
+	ret = lseek64(m_hLbaDev,(off64_t)dwPosBuf*512,SEEK_SET);
+	if (ret<0)
+	{
+		if (m_log){
+			m_log->Record(_T("ERROR:RKU_ReadLBA seek failed,err=%d,ret=%lld."),errno,ret);
+            m_log->Record(_T("the dwPosBuf = dwPosBuf*512,dwPosBuf:%lld!"), dwPosBuf*512);
+        }
+		return ERR_FAILED;
+	}
+	ret = read(m_hLbaDev,lpBuffer,dwCount*512);
+	if (ret!=dwCount*512)
+	{
+		if (m_log)
+			m_log->Record(_T("ERROR:RKU_ReadLBA read failed,err=%d"),errno);
+		return ERR_FAILED;
+	}
+	return ERR_SUCCESS;
+}
+
 int CRKUsbComm::RKU_ReadSector(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer)
 {
 	int ret;
-	if (m_hDev<0)
-		return ERR_DEVICE_OPEN_FAILED;
+	if (m_hDev<0){
+		//printf("RKU_ReadSector m_hDev is negative \n");
+		return RKU_ReadLBA_Direct(dwPos,dwCount,lpBuffer,RWMETHOD_LBA);
+	}
 	DWORD *pOffsetSec=(DWORD *)(lpBuffer);
 	DWORD *pCountSec=(DWORD *)(lpBuffer+4);
 	*pOffsetSec = dwPos;
@@ -330,8 +391,9 @@ int CRKUsbComm::RKU_TestBadBlock(BYTE ucFlashCS,DWORD dwPos,DWORD dwCount,BYTE* 
 {
 	int ret;
 	(void)ucFlashCS; (void)dwPos; (void)dwCount;
-	if (m_hDev<0)
-		return ERR_DEVICE_OPEN_FAILED;
+	if (m_hDev<0){
+		return ERR_SUCCESS;
+	}
 	ret = ioctl(m_hDev,GET_BAD_BLOCK_IO,lpBuffer);
 	if (ret)
 	{
@@ -494,8 +556,10 @@ int CRKUsbComm::RKU_WriteLBA(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer,BYTE bySub
 int CRKUsbComm::RKU_WriteSector(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer)
 {
 	int ret;
-	if (m_hDev<0)
-		return ERR_DEVICE_OPEN_FAILED;
+	if (m_hDev<0){
+		//printf("RKU_WriteSector m_hDev is negative \n");
+		return RKU_WriteLBALoader(dwPos,dwCount,lpBuffer,RWMETHOD_LBA);
+	}
 	DWORD *pOffset=(DWORD *)(lpBuffer);
 	DWORD *pCount=(DWORD *)(lpBuffer+4);
 	*pOffset = dwPos;
@@ -510,25 +574,15 @@ int CRKUsbComm::RKU_WriteSector(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer)
 	return ERR_SUCCESS;
 }
 
-int CRKUsbComm::RKU_EndWriteSector(BYTE* lpBuffer)
-{
-	int ret;
-	if (m_hDev<0)
-		return ERR_DEVICE_OPEN_FAILED;
-	ret = ioctl(m_hDev,END_WRITE_SECTOR_IO,lpBuffer);
-	if (ret)
-	{
-		if (m_log)
-			m_log->Record(_T("ERROR:RKU_EndWriteSector failed,err=%d"),errno);
-		return ERR_FAILED;
-	}
-	return ERR_SUCCESS;
-}
 int CRKUsbComm::RKU_GetLockFlag(BYTE* lpBuffer)
 {
 	int ret;
-	if (m_hDev<0)
-		return ERR_DEVICE_OPEN_FAILED;
+	if (m_hDev<0){
+		//printf("RKU_GetLockFlag m_hDev is negative \n");
+		DWORD *pFlag=(DWORD *)lpBuffer;
+		*pFlag = 0;
+		return ERR_SUCCESS;
+	}
 	ret = ioctl(m_hDev,GET_LOCK_FLAG_IO,lpBuffer);
 	if (ret)
 	{

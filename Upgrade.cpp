@@ -1023,6 +1023,7 @@ EXIT_UPGRADE:
 }
 bool do_rk_partition_upgrade(char *szFw,void *pCallback,void *pProgressCallback,char nBoot,char *szBootDev)
 {
+#if 0
 	bool bSuccess=false,bRet=false,bLock;
 	int iRet;
 	CRKImage *pImage=NULL;
@@ -1160,6 +1161,10 @@ EXIT_DOWNLOAD:
 	}
 	
 	return bSuccess;
+#else
+	(void)nBoot;
+	return do_rk_firmware_upgrade(szFw,pCallback,pProgressCallback,szBootDev);
+#endif
 }
 
 	

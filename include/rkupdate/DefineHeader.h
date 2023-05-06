@@ -51,6 +51,7 @@ using namespace std;
 
 typedef unsigned int u_int32;
 typedef unsigned char u_int8;
+typedef unsigned short u_int16;
 typedef unsigned char BYTE;
 typedef signed char CHAR;
 typedef BYTE *PBYTE;
