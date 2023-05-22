@@ -377,8 +377,8 @@ int CRKUsbComm::RKU_ReadSector(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer)
 	if (ret)
 	{
 		if (m_log)
-			m_log->Record(_T("ERROR:RKU_ReadSector failed,err=%d"),errno);
-		return ERR_FAILED;
+			m_log->Record(_T("RKU_ReadSector,err=%d"),errno);
+		return RKU_ReadLBA_Direct(dwPos,dwCount,lpBuffer,RWMETHOD_LBA);
 	}
 	return ERR_SUCCESS;
 }
@@ -398,8 +398,8 @@ int CRKUsbComm::RKU_TestBadBlock(BYTE ucFlashCS,DWORD dwPos,DWORD dwCount,BYTE* 
 	if (ret)
 	{
 		if (m_log)
-			m_log->Record(_T("ERROR:RKU_TestBadBlock failed,err=%d"),errno);
-		return ERR_FAILED;
+			m_log->Record(_T("RKU_TestBadBlock,err=%d"),errno);
+		return ERR_SUCCESS;
 	}
 	if (m_log)
 	{
@@ -568,8 +568,8 @@ int CRKUsbComm::RKU_WriteSector(DWORD dwPos,DWORD dwCount,BYTE* lpBuffer)
 	if (ret)
 	{
 		if (m_log)
-			m_log->Record(_T("ERROR:RKU_WriteSector failed,err=%d"),errno);
-		return ERR_FAILED;
+			m_log->Record(_T("RKU_WriteSector,err=%d"),errno);
+		return RKU_WriteLBALoader(dwPos,dwCount,lpBuffer,RWMETHOD_LBA);
 	}
 	return ERR_SUCCESS;
 }
@@ -586,9 +586,12 @@ int CRKUsbComm::RKU_GetLockFlag(BYTE* lpBuffer)
 	ret = ioctl(m_hDev,GET_LOCK_FLAG_IO,lpBuffer);
 	if (ret)
 	{
+		DWORD *pFlag=(DWORD *)lpBuffer;
+		*pFlag = 0;
+
 		if (m_log)
-			m_log->Record(_T("ERROR:RKU_GetLockFlag failed,err=%d"),errno);
-		return ERR_FAILED;
+			m_log->Record(_T("RKU_GetLockFlag,err=%d"),errno);
+		return ERR_SUCCESS;
 	}
 	DWORD *pFlag=(DWORD *)lpBuffer;
 	if (m_log)
